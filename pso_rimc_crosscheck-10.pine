@@ -1,0 +1,70 @@
+// PSO + RIMC cross-check indicator
+// Mirrors the same range/breakout/location logic as structure.py and
+// signals.py, so TradingView alerts can be used as an independent
+// second opinion against the Python/OANDA-driven bot.
+//
+// This is an INDICATOR that fires alertcondition()s, not an
+// auto-trading strategy - TradingView cannot place trades for you.
+// Set an alert on this script with webhook delivery pointed at your
+// bot's /webhook endpoint (see tradingview_webhook.py).
+//
+// Written with flat, single-line statements only (no indented if
+// blocks) to avoid editor auto-indent-on-paste issues.
+//
+// NOTE ON PARITY: this is a best-effort port of the same defaults as
+// config.py. If you change config.py's thresholds, update the inputs
+// below to match, or the two systems will quietly disagree.
+
+//@version=5
+indicator("PSO+RIMC Cross-Check", overlay=true)
+
+rangeMinBars = input.int(6, "Range min bars")
+rangeAtrMult = input.float(1.5, "Range max ATR multiple")
+breakoutAtrMult = input.float(0.5, "Breakout ATR multiple")
+atrPeriod = input.int(14, "ATR period")
+swingLookback = input.int(100, "Swing lookback bars (location)")
+midZoneBuffer = input.float(0.10, "Mid-zone buffer %")
+sessionStart = input.session("0800-1000", "London session window")
+
+atrVal = ta.atr(atrPeriod)
+rangeHigh = ta.highest(high, rangeMinBars)
+rangeLow = ta.lowest(low, rangeMinBars)
+spread = rangeHigh - rangeLow
+inRange = spread <= (rangeAtrMult * atrVal)
+
+var float lastRangeHigh = na
+var float lastRangeLow = na
+var bool wasInRange = false
+
+lastRangeHigh := inRange ? rangeHigh : lastRangeHigh
+lastRangeLow := inRange ? rangeLow : lastRangeLow
+
+thresh = breakoutAtrMult * atrVal
+breakoutReady = not inRange and wasInRange and not na(atrVal)
+breakoutUp = breakoutReady and close > lastRangeHigh + thresh
+breakoutDown = breakoutReady and close < lastRangeLow - thresh
+breakoutDir = breakoutUp ? 1 : breakoutDown ? -1 : 0
+
+wasInRange := inRange ? true : (breakoutUp or breakoutDown) ? false : wasInRange
+
+swingHigh = ta.highest(high, swingLookback)
+swingLow = ta.lowest(low, swingLookback)
+swingMid = (swingHigh + swingLow) / 2
+legRange = swingHigh - swingLow
+midBuffer = legRange * midZoneBuffer
+upperMid = swingMid + midBuffer / 2
+lowerMid = swingMid - midBuffer / 2
+
+isPremium = close > upperMid
+isDiscount = close < lowerMid
+
+inSession = not na(time(timeframe.period, sessionStart))
+
+longSignal = breakoutDir == 1 and isDiscount and inSession
+shortSignal = breakoutDir == -1 and isPremium and inSession
+
+plotshape(longSignal, title="Long setup", style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small)
+plotshape(shortSignal, title="Short setup", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small)
+
+alertcondition(longSignal, title="PSO-RIMC Long", message='{"symbol":"{{ticker}}","direction":"buy","price":{{close}},"time":"{{time}}"}')
+alertcondition(shortSignal, title="PSO-RIMC Short", message='{"symbol":"{{ticker}}","direction":"sell","price":{{close}},"time":"{{time}}"}')
