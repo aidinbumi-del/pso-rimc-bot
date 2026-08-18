@@ -27,6 +27,7 @@ mocked responses (see test_deriv_connector.py) - the actual live
 WebSocket connection is yours to confirm on first run.
 """
 import json
+import time
 import pandas as pd
 
 try:
@@ -61,7 +62,7 @@ def parse_candles_response(data: dict) -> pd.DataFrame:
     rows = []
     for c in candles:
         rows.append((
-            pd.Timestamp(c["epoch"], unit="s"),
+            pd.Timestamp(c["epoch"], unit="s", tz="UTC"),
             float(c["open"]), float(c["high"]),
             float(c["low"]), float(c["close"]),
         ))
@@ -144,3 +145,70 @@ class DerivConnector:
         response = self._send_request(request)
         price = parse_tick_response(response)
         return price, price
+
+    def get_historical_bars(self, symbol: str, timeframe: str,
+                             start: pd.Timestamp, end: pd.Timestamp = None,
+                             chunk_size: int = 5000) -> pd.DataFrame:
+        """
+        Paginates backward from `end` (default: now) fetching up to
+        chunk_size candles per request via Deriv's ticks_history endpoint,
+        repeating until reaching `start`. For a full year of 1-minute
+        data this means dozens of requests and can take several minutes -
+        this is a one-off historical-analysis tool, not something the
+        live bot calls during normal operation.
+
+        Returns a single combined, deduplicated, sorted DataFrame in the
+        same format as get_recent_bars().
+
+        I have not run this against Deriv's live servers myself (no
+        network access here) - the pagination logic is verified offline
+        with mocked multi-page responses (test_deriv_connector.py), but
+        real-world behavior (rate limits, exact per-request caps, how
+        far back history actually goes for this symbol) is yours to
+        confirm on first run.
+        """
+        deriv_symbol = SYMBOL_MAP.get(symbol, symbol)
+        granularity = GRANULARITY_SECONDS.get(timeframe)
+        if granularity is None:
+            raise ValueError(f"Unsupported timeframe: {timeframe}")
+
+        if end is None:
+            end = pd.Timestamp.now(tz="UTC")
+
+        end_epoch = int(end.timestamp())
+        start_epoch = int(start.timestamp())
+
+        all_frames = []
+        current_end = end_epoch
+        seen_earliest = None
+
+        while current_end > start_epoch:
+            request = {
+                "ticks_history": deriv_symbol,
+                "style": "candles",
+                "granularity": granularity,
+                "count": chunk_size,
+                "end": current_end,
+            }
+            response = self._send_request(request)
+            chunk = parse_candles_response(response)
+            if chunk.empty:
+                break
+            all_frames.append(chunk)
+            earliest_ts = chunk.index.min()
+            if seen_earliest is not None and earliest_ts >= seen_earliest:
+                # Not making progress (e.g. hit the start of available
+                # history) - stop rather than loop forever.
+                break
+            seen_earliest = earliest_ts
+            current_end = int(earliest_ts.timestamp()) - granularity
+            time.sleep(0.3)  # be polite to the API between requests
+
+        if not all_frames:
+            return pd.DataFrame(columns=["open", "high", "low", "close"])
+
+        combined = pd.concat(all_frames)
+        combined = combined[~combined.index.duplicated(keep="first")]
+        combined = combined.sort_index()
+        combined = combined[(combined.index >= start) & (combined.index <= end)]
+        return combined
