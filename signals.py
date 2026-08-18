@@ -32,9 +32,16 @@ def compute_htf_bias(df_ltf: pd.DataFrame, cfg: StrategyConfig) -> pd.Series:
 
 
 def in_session(ts: pd.Timestamp, cfg: StrategyConfig) -> bool:
-    """ts is expected in broker server time; converted to London time
-    using cfg.broker_utc_offset_hours before checking the session window."""
-    ts_london = ts - pd.Timedelta(hours=cfg.broker_utc_offset_hours)
+    """If ts is timezone-aware (e.g. Deriv/OANDA data, which is UTC),
+    converts properly to Europe/London - this automatically handles the
+    BST/GMT switch, unlike a fixed hour offset. If ts is naive (MT5 data,
+    or backtest data already in London time), falls back to the manual
+    broker_utc_offset_hours shift, since there's no reliable way to know
+    a naive timestamp's DST status without that broker-specific info."""
+    if ts.tzinfo is not None:
+        ts_london = ts.tz_convert("Europe/London")
+    else:
+        ts_london = ts - pd.Timedelta(hours=cfg.broker_utc_offset_hours)
     start = ts_london.replace(hour=cfg.session_start_hour,
                                minute=cfg.session_start_minute, second=0, microsecond=0)
     end = ts_london.replace(hour=cfg.session_end_hour,
