@@ -38,11 +38,17 @@ except ImportError:
 
 DERIV_WS_URL = "wss://ws.derivws.com/websockets/v3?app_id={app_id}"
 
-# Deriv uses "frx"-prefixed symbols for forex, not "EURUSD".
+# Deriv uses "frx"-prefixed symbols for forex, not "EURUSD". Gold vs USD
+# is also under the frx prefix on Deriv's API ("frxXAUUSD") - I have not
+# been able to verify this exact symbol string against Deriv's live
+# symbol list myself (no network access), so confirm it resolves
+# correctly on your first run; if it errors, check Deriv's Active Symbols
+# list for the correct spot gold instrument name.
 SYMBOL_MAP = {
     "EURUSD": "frxEURUSD",
     "GBPUSD": "frxGBPUSD",
     "USDJPY": "frxUSDJPY",
+    "XAUUSD": "frxXAUUSD",
 }
 
 GRANULARITY_SECONDS = {
