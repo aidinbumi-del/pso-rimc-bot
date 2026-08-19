@@ -7,11 +7,23 @@ have performed over a real historical period. It's not part of the
 bot's normal 24/7 operation.
 
 USAGE:
-    python historical_backtest.py [years_back]
+    python historical_backtest.py [years_back] [target_rr]
 
-    years_back defaults to 1.0 if not given, e.g.:
-        python historical_backtest.py        -> last 1 year
-        python historical_backtest.py 0.5    -> last 6 months
+    years_back defaults to 1.0 if not given.
+    target_rr defaults to config.py's target_rr (5.0) if not given -
+    several source videos described the trader personally using a fixed
+    10R target instead, so this is worth testing separately, e.g.:
+        python historical_backtest.py        -> 1 year, default 5R
+        python historical_backtest.py 0.5    -> 6 months, default 5R
+        python historical_backtest.py 1 10   -> 1 year, 10R target
+
+    Note: target_rr only changes where the take-profit is placed, not
+    which setups qualify as valid trades in the first place (that's
+    governed by the stop-size/location/session filters, unaffected by
+    this). So the same underlying trades get re-scored against a wider
+    or narrower target - expect win rate to drop as target_rr increases
+    (harder to run further before pulling back), with each win paying
+    out proportionally more.
 
 WHAT TO EXPECT:
     Fetching a full year of 1-minute data means dozens of paginated API
@@ -39,12 +51,15 @@ def main():
     years_back = float(sys.argv[1]) if len(sys.argv) > 1 else 1.0
 
     cfg = StrategyConfig()
+    if len(sys.argv) > 2:
+        cfg.target_rr = float(sys.argv[2])
     conn = DerivConnector()
 
     end = pd.Timestamp.now(tz="UTC")
     start = end - pd.Timedelta(days=int(years_back * 365))
 
     print(f"Fetching ~{years_back} year(s) of {SYMBOL} 1-min data from Deriv...")
+    print(f"Target R:R for this run: {cfg.target_rr}")
     print(f"Range: {start} to {end}")
     print("This can take several minutes and many API requests - please be patient.\n")
 
