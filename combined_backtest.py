@@ -118,6 +118,20 @@ def main():
     print(f"total_r: {round(total_r, 2)}")
     print(f"avg_r_per_trade: {round(total_r / total_trades, 3)}")
 
+    print("\n--- Itemized trade list (chronological, both instruments) ---")
+    for i, row in enumerate(combined_df.itertuples(index=False), 1):
+        r = 0.0 if abs(row.r_multiple) < 1e-9 else row.r_multiple  # avoid "-0.00"
+        if row.reason == "target":
+            label = "WIN"
+        elif row.reason == "breakeven":
+            label = "BREAKEVEN"
+        else:
+            label = "LOSS"
+        direction_str = "LONG" if row.direction == 1 else "SHORT"
+        print(f"{i}. {label:10s} [{row.instrument}] {row.entry_time}  "
+              f"{direction_str:5s} entry={row.entry_price:.5f} "
+              f"exit={row.exit_price:.5f}  R={r:+.2f}")
+
     combined_df.to_csv("combined_backtest_trades.csv", index=False)
     print(f"\nFull combined trade log saved to combined_backtest_trades.csv")
 
