@@ -115,7 +115,7 @@ class StrategyConfig:
     # --- Frequency controls ---
     max_trades_per_session: int = 2
     # 0=Monday ... 6=Sunday. Default Mon-Thu per source material.
-    trading_days: List[int] = field(default_factory=lambda: [0, 1, 2, 3, 4])
+    trading_days: List[int] = field(default_factory=lambda: [0, 1, 2, 3])
 
     # --- TradingView cross-check ---
     # If True, a valid setup detected via OANDA data is only actually
