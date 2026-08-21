@@ -5,7 +5,10 @@ detection into concrete entry signals with stop/target levels.
 import numpy as np
 import pandas as pd
 from config import StrategyConfig
-from structure import detect_ranges, detect_breakouts, compute_location
+from structure import (
+    detect_ranges, detect_breakouts, compute_location,
+    classify_market_regime, classify_swing_strength,
+)
 
 
 def resample_htf(df_ltf: pd.DataFrame, cfg: StrategyConfig) -> pd.DataFrame:
@@ -14,20 +17,31 @@ def resample_htf(df_ltf: pd.DataFrame, cfg: StrategyConfig) -> pd.DataFrame:
     return htf
 
 
-def compute_htf_bias(df_ltf: pd.DataFrame, cfg: StrategyConfig) -> pd.Series:
+def compute_htf_context(df_ltf: pd.DataFrame, cfg: StrategyConfig):
     """
-    Returns a Series aligned to df_ltf's index giving the prevailing HTF
-    bias (1 = bullish, -1 = bearish, 0 = none) at each LTF bar, based on
-    the most recent HTF breakout.
+    Returns (bias_ltf, regime_ltf): both Series aligned to df_ltf's index.
+    bias_ltf: prevailing HTF bias (1 bullish, -1 bearish, 0 none), based
+    on the most recent HTF breakout.
+    regime_ltf: 'trending' or 'consolidation', based on whether the HTF
+    is currently inside a detected range (see classify_market_regime).
     """
     htf = resample_htf(df_ltf, cfg)
     htf = detect_ranges(htf, cfg)
     htf = detect_breakouts(htf, cfg)
 
-    # Forward-fill the most recent non-zero breakout direction on the HTF
-    # index, then reindex onto the LTF index.
     bias = htf["breakout_dir"].replace(0, np.nan).ffill().fillna(0)
     bias_ltf = bias.reindex(df_ltf.index, method="ffill").fillna(0)
+
+    regime = classify_market_regime(htf)
+    regime_ltf = regime.reindex(df_ltf.index, method="ffill").fillna("trending")
+
+    return bias_ltf, regime_ltf
+
+
+def compute_htf_bias(df_ltf: pd.DataFrame, cfg: StrategyConfig) -> pd.Series:
+    """Kept for backward compatibility - use compute_htf_context() for
+    both bias and regime together without resampling twice."""
+    bias_ltf, _ = compute_htf_context(df_ltf, cfg)
     return bias_ltf
 
 
@@ -52,21 +66,23 @@ def in_session(ts: pd.Timestamp, cfg: StrategyConfig) -> bool:
 def generate_signals(df_ltf: pd.DataFrame, cfg: StrategyConfig) -> pd.DataFrame:
     """
     Main signal pipeline. Returns df_ltf with added columns:
-    htf_bias, location, ltf_breakout_dir, setup_valid, direction,
-    entry_price, stop_price, target_price
+    htf_bias, market_regime, location, setup_valid, direction,
+    entry_price, stop_price, target_price, swing_strong
     """
     out = df_ltf.copy()
-    out["htf_bias"] = compute_htf_bias(out, cfg)
+    htf_bias, htf_regime = compute_htf_context(out, cfg)
+    out["htf_bias"] = htf_bias
 
     out = detect_ranges(out, cfg)
     out = detect_breakouts(out, cfg)
-    out = compute_location(out, cfg)
+    out = compute_location(out, cfg, regime=htf_regime)
 
     direction = np.zeros(len(out), dtype=int)
     entry_price = np.full(len(out), np.nan)
     stop_price = np.full(len(out), np.nan)
     target_price = np.full(len(out), np.nan)
     setup_valid = np.zeros(len(out), dtype=bool)
+    swing_strong = np.full(len(out), True)
 
     closes = out["close"].values
     highs = out["high"].values
@@ -74,7 +90,8 @@ def generate_signals(df_ltf: pd.DataFrame, cfg: StrategyConfig) -> pd.DataFrame:
     b_dir = out["breakout_dir"].values
     b_high = out["breakout_range_high"].values
     b_low = out["breakout_range_low"].values
-    htf_bias = out["htf_bias"].values
+    b_range_start = out["breakout_range_start"].values
+    htf_bias_arr = out["htf_bias"].values
     location = out["location"].values
     index = out.index
 
@@ -93,10 +110,12 @@ def generate_signals(df_ltf: pd.DataFrame, cfg: StrategyConfig) -> pd.DataFrame:
             continue
 
         # Must align with HTF bias.
-        if htf_bias[i] == 0 or d != htf_bias[i]:
+        if htf_bias_arr[i] == 0 or d != htf_bias_arr[i]:
             continue
 
         # Location filter: shorts only from premium, longs only from discount.
+        # (Threshold itself already adapts to trending vs consolidation
+        # regime inside compute_location.)
         if d == 1 and location[i] != "discount":
             continue
         if d == -1 and location[i] != "premium":
@@ -111,12 +130,25 @@ def generate_signals(df_ltf: pd.DataFrame, cfg: StrategyConfig) -> pd.DataFrame:
         if d == 1:
             entry = b_high[i]  # buy back at top of broken range (discount side)
             stop = b_low[i] - stop_buf
+            is_high_boundary = False  # the LOW of the range is the stop boundary
         else:
             entry = b_low[i]  # sell back at bottom of broken range (premium side)
             stop = b_high[i] + stop_buf
+            is_high_boundary = True  # the HIGH of the range is the stop boundary
 
         stop_dist = abs(entry - stop)
         if stop_dist <= 0 or stop_dist > max_stop or stop_dist < min_stop:
+            continue
+
+        # Strong vs weak swing point filter (NJAT Telegram material):
+        # only trust a tight stop beyond a range boundary that shows a
+        # sharp, single rejection rather than multiple slow "stacked"
+        # touches.
+        strong = classify_swing_strength(
+            out, i, int(b_range_start[i]), is_high_boundary, cfg
+        )
+        swing_strong[i] = strong
+        if cfg.require_strong_swing_filter and not strong:
             continue
 
         target = entry + cfg.target_rr * stop_dist * d
@@ -132,4 +164,5 @@ def generate_signals(df_ltf: pd.DataFrame, cfg: StrategyConfig) -> pd.DataFrame:
     out["stop_price"] = stop_price
     out["target_price"] = target_price
     out["setup_valid"] = setup_valid
+    out["swing_strong"] = swing_strong
     return out
