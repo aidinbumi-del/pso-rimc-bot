@@ -41,7 +41,7 @@ import sys
 import pandas as pd
 from config import StrategyConfig
 from signals import generate_signals
-from backtest import run_backtest, summarize_trades
+from backtest import run_backtest, summarize_trades, print_trade_list
 from deriv_connector import DerivConnector
 
 SYMBOL = "EURUSD"
@@ -81,6 +81,9 @@ def main():
     summary = summarize_trades(trades, cfg)
     for k, v in summary.items():
         print(f"{k}: {v}")
+
+    print("\n--- Itemized trade list ---")
+    print_trade_list(trades)
 
     if trades:
         rows = []
