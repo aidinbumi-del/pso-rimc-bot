@@ -20,7 +20,10 @@ class StrategyConfig:
 
     # --- Range / breakout detection (used at both HTF and LTF) ---
     # Minimum number of bars required to call something a "range".
-    range_min_bars: int = 6
+    # NJAT's own private Telegram material states this explicitly:
+    # "A confirmed range starts with a minimum of 3 candles" - this is
+    # a documented value, not a guess (unlike most other thresholds here).
+    range_min_bars: int = 3
     # A range is defined as N bars whose high-low spread stays within
     # this multiple of ATR (i.e. "not trending").
     range_max_atr_mult: float = 1.5
@@ -36,8 +39,32 @@ class StrategyConfig:
     swing_lookback_bars: int = 100
     # Buffer around the 50% midline treated as "no trade" (as a fraction
     # of the leg's total range, e.g. 0.1 = middle 10% of the leg is dead
-    # zone).
+    # zone). Used in TRENDING regime only - see consolidation_edge_pct
+    # for the separate ranging-market rule.
     mid_zone_buffer_pct: float = 0.10
+
+    # NJAT's official material distinguishes trending vs consolidation
+    # markets for location: trending uses the 50% split above; a
+    # consolidation/ranging market instead only treats the outer edge
+    # fraction of the range as valid ("Edge Top 25% = High Probability",
+    # "Middle = Low Probability" - NJAT calls the middle 50% zone "the
+    # slaughterhouse"). This is a documented value from NJAT's own guide.
+    consolidation_edge_pct: float = 0.25
+
+    # --- Strong vs Weak swing point filter (NJAT Telegram material) ---
+    # A "strong" high/low forms from a fast, sharp rejection and can be
+    # trusted for a tight stop (BFIs "protect" it). A "weak" one forms
+    # slowly with multiple stacked touches near the same level and price
+    # is likely to shoot through it. NJAT describes this qualitatively
+    # (speed/aggression, "stacked highs or lows together" = weak) without
+    # an exact formula - the two params below are my own concrete proxy:
+    # a range boundary is classified "weak" if more than
+    # max_stacked_touches_for_strong bars within the range came within
+    # stacked_touch_atr_mult * ATR of the extreme (many close touches =
+    # slow grind = weak); otherwise "strong".
+    require_strong_swing_filter: bool = True
+    stacked_touch_atr_mult: float = 0.3
+    max_stacked_touches_for_strong: int = 2
 
     # --- Entry filter ---
     # Reject any setup whose stop distance exceeds this many pips, or
